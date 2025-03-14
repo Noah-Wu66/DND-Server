@@ -192,4 +192,149 @@ router.delete('/sessions/:sessionId/history', async (req, res, next) => {
   }
 });
 
+/**
+ * @route   POST /api/v1/dice/sessions/:sessionId/advantage
+ * @desc    设置优势/劣势状态
+ * @access  Public
+ */
+router.post('/sessions/:sessionId/advantage', async (req, res, next) => {
+  try {
+    const { sessionId } = req.params;
+    const { hasAdvantage, hasDisadvantage } = req.body;
+    
+    if (hasAdvantage === undefined && hasDisadvantage === undefined) {
+      return res.status(400).json({
+        success: false,
+        error: '缺少优势/劣势状态数据'
+      });
+    }
+    
+    // 构建更新数据对象
+    const updateData = {
+      lastUpdated: Date.now()
+    };
+    
+    if (hasAdvantage !== undefined) {
+      updateData['diceState.advantage'] = hasAdvantage;
+    }
+    
+    if (hasDisadvantage !== undefined) {
+      updateData['diceState.disadvantage'] = hasDisadvantage;
+    }
+    
+    // 更新会话的优势/劣势状态
+    const session = await DiceSession.findOneAndUpdate(
+      { sessionId },
+      updateData,
+      { new: true }
+    );
+    
+    if (!session) {
+      return res.status(404).json({
+        success: false,
+        error: '找不到会话'
+      });
+    }
+    
+    // 通过Socket.io通知其他客户端
+    req.app.get('io')?.to(sessionId).emit('advantage-updated', {
+      hasAdvantage: session.diceState.advantage,
+      hasDisadvantage: session.diceState.disadvantage
+    });
+    
+    res.json({
+      success: true,
+      data: {
+        sessionId: session.sessionId,
+        diceState: session.diceState,
+        lastUpdated: session.lastUpdated
+      }
+    });
+    
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   GET /api/v1/dice/sessions/:sessionId/statistics
+ * @desc    获取骰子统计信息
+ * @access  Public
+ */
+router.get('/sessions/:sessionId/statistics', async (req, res, next) => {
+  try {
+    const { sessionId } = req.params;
+    
+    const session = await DiceSession.findOne({ sessionId });
+    if (!session) {
+      return res.status(404).json({
+        success: false,
+        error: '找不到会话'
+      });
+    }
+    
+    // 计算统计信息
+    const statistics = {
+      totalRolls: session.rollHistory.length,
+      diceDistribution: {
+        d4: 0,
+        d6: 0,
+        d8: 0,
+        d10: 0,
+        d12: 0,
+        d20: 0
+      },
+      averageRolls: {
+        d4: 0,
+        d6: 0,
+        d8: 0,
+        d10: 0,
+        d12: 0,
+        d20: 0
+      },
+      criticalSuccesses: 0,
+      criticalFailures: 0
+    };
+    
+    // 分析历史记录
+    session.rollHistory.forEach(roll => {
+      // 统计骰子使用情况
+      Object.keys(roll.dice).forEach(die => {
+        if (statistics.diceDistribution[die] !== undefined) {
+          statistics.diceDistribution[die]++;
+        }
+      });
+      
+      // 计算平均点数
+      Object.keys(roll.results).forEach(die => {
+        if (statistics.averageRolls[die] !== undefined) {
+          const currentTotal = statistics.averageRolls[die] * statistics.diceDistribution[die];
+          statistics.averageRolls[die] = (currentTotal + roll.results[die]) / (statistics.diceDistribution[die] + 1);
+        }
+      });
+      
+      // 统计关键成功和失败
+      if (roll.results.d20) {
+        if (roll.results.d20 === 20) {
+          statistics.criticalSuccesses++;
+        } else if (roll.results.d20 === 1) {
+          statistics.criticalFailures++;
+        }
+      }
+    });
+    
+    res.json({
+      success: true,
+      data: {
+        sessionId: session.sessionId,
+        statistics,
+        lastUpdated: session.lastUpdated
+      }
+    });
+    
+  } catch (error) {
+    next(error);
+  }
+});
+
 module.exports = router;

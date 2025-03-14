@@ -8,6 +8,7 @@ require('dotenv').config();
 
 const battlesRoutes = require('./routes/battles');
 const diceRoutes = require('./routes/dice'); // 骰子路由
+const battlefieldRoutes = require('./routes/battlefield'); // 新增战场路由
 const errorHandler = require('./middlewares/errorHandler');
 const connectDB = require('./config/database');
 
@@ -46,6 +47,7 @@ app.get('/', (req, res) => {
 // API路由
 app.use('/api/v1/battles', battlesRoutes);
 app.use('/api/v1/dice', diceRoutes); // 骰子API路由
+app.use('/api/v1/battlefield', battlefieldRoutes); // 新增战场API路由
 
 // 存储骰子会话历史记录的内存缓存
 const diceSessionHistory = {};
@@ -159,6 +161,48 @@ io.on('connection', (socket) => {
       
       // 广播重置事件给其他客户端
       socket.to(data.sessionId).emit('reset-dice');
+    }
+  });
+  
+  // 战场相关事件
+  socket.on('join-battlefield', (sessionId) => {
+    console.log(`Client ${socket.id} joined battlefield session: ${sessionId}`);
+    socket.join(sessionId);
+  });
+  
+  socket.on('piece-moved', (data) => {
+    if (data && data.sessionId && data.pieceId && data.x !== undefined && data.y !== undefined) {
+      console.log(`Piece moved in ${data.sessionId}: ${data.pieceId}`);
+      socket.to(data.sessionId).emit('piece-moved', {
+        pieceId: data.pieceId,
+        x: data.x,
+        y: data.y
+      });
+    }
+  });
+  
+  socket.on('background-updated', (data) => {
+    if (data && data.sessionId && data.imageUrl) {
+      console.log(`Background updated in ${data.sessionId}`);
+      socket.to(data.sessionId).emit('background-updated', {
+        imageUrl: data.imageUrl
+      });
+    }
+  });
+  
+  socket.on('battlefield-settings-updated', (data) => {
+    if (data && data.sessionId && data.settings) {
+      console.log(`Battlefield settings updated in ${data.sessionId}`);
+      socket.to(data.sessionId).emit('battlefield-settings-updated', data.settings);
+    }
+  });
+  
+  socket.on('battlefield-state-updated', (data) => {
+    if (data && data.sessionId && data.state) {
+      console.log(`Battlefield state updated in ${data.sessionId}`);
+      socket.to(data.sessionId).emit('battlefield-state-updated', {
+        state: data.state
+      });
     }
   });
   

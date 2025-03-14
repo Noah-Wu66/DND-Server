@@ -145,4 +145,189 @@ router.get('/sessions', async (req, res, next) => {
   }
 });
 
+/**
+ * @route   POST /api/v1/battles/sessions/:sessionId/initiative
+ * @desc    更新先攻顺序
+ * @access  Public
+ */
+router.post('/sessions/:sessionId/initiative', async (req, res, next) => {
+  try {
+    const { sessionId } = req.params;
+    const { initiativeOrder } = req.body;
+    
+    if (!initiativeOrder || !Array.isArray(initiativeOrder)) {
+      return res.status(400).json({
+        success: false,
+        error: '缺少有效的先攻顺序数据'
+      });
+    }
+    
+    // 更新会话的先攻顺序
+    const session = await Session.findOneAndUpdate(
+      { sessionId },
+      {
+        initiativeOrder,
+        lastUpdated: Date.now()
+      },
+      { new: true }
+    );
+    
+    if (!session) {
+      return res.status(404).json({
+        success: false,
+        error: '找不到会话'
+      });
+    }
+    
+    // 通过Socket.io通知其他客户端
+    req.app.get('io')?.to(sessionId).emit('initiative-updated', {
+      initiativeOrder: session.initiativeOrder
+    });
+    
+    res.json({
+      success: true,
+      data: {
+        sessionId: session.sessionId,
+        initiativeOrder: session.initiativeOrder,
+        lastUpdated: session.lastUpdated
+      }
+    });
+    
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   POST /api/v1/battles/sessions/:sessionId/status
+ * @desc    更新战斗状态
+ * @access  Public
+ */
+router.post('/sessions/:sessionId/status', async (req, res, next) => {
+  try {
+    const { sessionId } = req.params;
+    const { currentTurn, round, isActive } = req.body;
+    
+    if (currentTurn === undefined && round === undefined && isActive === undefined) {
+      return res.status(400).json({
+        success: false,
+        error: '缺少战斗状态数据'
+      });
+    }
+    
+    // 构建更新数据对象
+    const updateData = {
+      lastUpdated: Date.now()
+    };
+    
+    if (currentTurn !== undefined) {
+      updateData.currentTurn = currentTurn;
+    }
+    
+    if (round !== undefined) {
+      updateData.round = round;
+    }
+    
+    if (isActive !== undefined) {
+      updateData.isActive = isActive;
+    }
+    
+    // 更新会话的战斗状态
+    const session = await Session.findOneAndUpdate(
+      { sessionId },
+      updateData,
+      { new: true }
+    );
+    
+    if (!session) {
+      return res.status(404).json({
+        success: false,
+        error: '找不到会话'
+      });
+    }
+    
+    // 通过Socket.io通知其他客户端
+    req.app.get('io')?.to(sessionId).emit('battle-status-updated', {
+      currentTurn: session.currentTurn,
+      round: session.round,
+      isActive: session.isActive
+    });
+    
+    res.json({
+      success: true,
+      data: {
+        sessionId: session.sessionId,
+        currentTurn: session.currentTurn,
+        round: session.round,
+        isActive: session.isActive,
+        lastUpdated: session.lastUpdated
+      }
+    });
+    
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * @route   POST /api/v1/battles/sessions/:sessionId/effects
+ * @desc    管理状态效果
+ * @access  Public
+ */
+router.post('/sessions/:sessionId/effects', async (req, res, next) => {
+  try {
+    const { sessionId } = req.params;
+    const { monsterId, effects } = req.body;
+    
+    if (!monsterId || !effects) {
+      return res.status(400).json({
+        success: false,
+        error: '缺少怪物ID或效果数据'
+      });
+    }
+    
+    // 更新怪物的状态效果
+    const session = await Session.findOne({ sessionId });
+    if (!session) {
+      return res.status(404).json({
+        success: false,
+        error: '找不到会话'
+      });
+    }
+    
+    const monster = session.monsters.get(monsterId);
+    if (!monster) {
+      return res.status(404).json({
+        success: false,
+        error: '找不到怪物'
+      });
+    }
+    
+    monster.effects = effects;
+    session.monsters.set(monsterId, monster);
+    session.lastUpdated = Date.now();
+    
+    await session.save();
+    
+    // 通过Socket.io通知其他客户端
+    req.app.get('io')?.to(sessionId).emit('effects-updated', {
+      monsterId,
+      effects: monster.effects
+    });
+    
+    res.json({
+      success: true,
+      data: {
+        sessionId: session.sessionId,
+        monsterId,
+        effects: monster.effects,
+        lastUpdated: session.lastUpdated
+      }
+    });
+    
+  } catch (error) {
+    next(error);
+  }
+});
+
 module.exports = router;
