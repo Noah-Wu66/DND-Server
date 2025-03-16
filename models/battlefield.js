@@ -10,18 +10,16 @@ const battlefieldSchema = new mongoose.Schema({
     imageUrl: String,
     lastUpdated: Date
   },
-  pieces: {
-    type: Map,
-    of: {
-      id: String,
-      name: String,
-      type: String, // 'adventurer' 或 'monster'
-      x: Number,
-      y: Number,
-      currentHp: Number,
-      maxHp: Number
-    }
-  },
+  // 改为数组存储，不用Map
+  pieces: [{
+    id: String,
+    name: String,
+    type: String, 
+    x: Number,
+    y: Number,
+    currentHp: Number,
+    maxHp: Number
+  }],
   settings: {
     scale: {
       type: Number,
@@ -50,4 +48,4 @@ battlefieldSchema.index({ lastUpdated: -1 });
 
 const Battlefield = mongoose.model('Battlefield', battlefieldSchema);
 
-module.exports = Battlefield; 
+module.exports = Battlefield;
