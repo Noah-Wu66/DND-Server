@@ -53,6 +53,9 @@ app.use('/api/v1/battlefield', battlefieldRoutes); // 新增战场API路由
 // 存储骰子会话历史记录的内存缓存
 const diceSessionHistory = {};
 
+// 存储分块图片的缓存
+const imageChunks = {};
+
 // WebSocket处理
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
@@ -171,7 +174,7 @@ io.on('connection', (socket) => {
     socket.join(sessionId);
   });
   
-  socket.on('piece-moved', (data) => {
+  socket.on('move-piece', (data) => {
     if (data && data.sessionId && data.pieceId && data.x !== undefined && data.y !== undefined) {
       console.log(`Piece moved in ${data.sessionId}: ${data.pieceId}`);
       socket.to(data.sessionId).emit('piece-moved', {
@@ -182,11 +185,38 @@ io.on('connection', (socket) => {
     }
   });
   
-  socket.on('background-updated', (data) => {
+  socket.on('update-background', (data) => {
     if (data && data.sessionId && data.imageUrl) {
       console.log(`Background updated in ${data.sessionId}`);
       socket.to(data.sessionId).emit('background-updated', {
         imageUrl: data.imageUrl
+      });
+    }
+  });
+  
+  socket.on('update-grid-visibility', (data) => {
+    if (data && data.sessionId && data.isVisible !== undefined) {
+      console.log(`Grid visibility updated in ${data.sessionId}: ${data.isVisible}`);
+      socket.to(data.sessionId).emit('grid-visibility-updated', {
+        isVisible: data.isVisible
+      });
+    }
+  });
+  
+  socket.on('update-piece-size', (data) => {
+    if (data && data.sessionId && data.size !== undefined) {
+      console.log(`Piece size updated in ${data.sessionId}: ${data.size}`);
+      socket.to(data.sessionId).emit('piece-size-updated', {
+        size: data.size
+      });
+    }
+  });
+  
+  socket.on('update-scale', (data) => {
+    if (data && data.sessionId && data.scale !== undefined) {
+      console.log(`Scale updated in ${data.sessionId}: ${data.scale}`);
+      socket.to(data.sessionId).emit('scale-updated', {
+        scale: data.scale
       });
     }
   });
@@ -204,6 +234,97 @@ io.on('connection', (socket) => {
       socket.to(data.sessionId).emit('battlefield-state-updated', {
         state: data.state
       });
+    }
+  });
+  
+  // 请求战场状态处理
+  socket.on('get-battlefield-state', (data) => {
+    if (data && data.sessionId) {
+      console.log(`Client ${socket.id} requested battlefield state for session: ${data.sessionId}`);
+      
+      // 从数据库获取状态并发送
+      const Battlefield = require('./models/battlefield');
+      Battlefield.findOne({ sessionId: data.sessionId })
+        .then(battlefield => {
+          if (battlefield) {
+            // 转换为客户端期望的格式
+            const clientState = {
+              isGridVisible: battlefield.settings.gridVisible,
+              pieceSize: battlefield.settings.pieceSize,
+              pieces: {}
+            };
+            
+            // 添加背景图片
+            if (battlefield.background && battlefield.background.imageUrl) {
+              clientState.backgroundImage = battlefield.background.imageUrl;
+            }
+            
+            // 转换棋子数据 - 从Map转换为对象
+            Array.from(battlefield.pieces.entries()).forEach(([id, piece]) => {
+              clientState.pieces[id] = {
+                x: piece.x || 0,
+                y: piece.y || 0,
+                name: piece.name || "",
+                type: piece.type || "monster",
+                currentHp: piece.currentHp || 0,
+                maxHp: piece.maxHp || 0
+              };
+            });
+            
+            socket.emit('battlefield-state', {
+              state: clientState
+            });
+          }
+        })
+        .catch(err => console.error('Error getting battlefield state:', err));
+    }
+  });
+  
+  // 分块图片传输处理
+  socket.on('background-transfer-start', (data) => {
+    if (data && data.sessionId && data.imageId && data.totalChunks) {
+      console.log(`Background transfer started in ${data.sessionId}, image ID: ${data.imageId}, total chunks: ${data.totalChunks}`);
+      
+      // 初始化图片块数据结构
+      imageChunks[data.imageId] = {
+        chunks: new Array(data.totalChunks),
+        received: 0,
+        total: data.totalChunks,
+        sessionId: data.sessionId
+      };
+    }
+  });
+  
+  socket.on('background-transfer-chunk', (data) => {
+    if (data && data.sessionId && data.imageId && data.chunk && data.chunkIndex !== undefined) {
+      const imageData = imageChunks[data.imageId];
+      
+      if (!imageData) {
+        console.error(`Received chunk for unknown image ID: ${data.imageId}`);
+        return;
+      }
+      
+      // 保存图片块
+      imageData.chunks[data.chunkIndex] = data.chunk;
+      imageData.received++;
+      
+      console.log(`Received chunk ${data.chunkIndex + 1}/${imageData.total} for image ${data.imageId}`);
+      
+      // 检查是否所有块都已接收
+      if (data.isLastChunk || imageData.received === imageData.total) {
+        console.log(`All chunks received for image ${data.imageId}, assembling...`);
+        
+        // 组装完整图片
+        const fullImage = imageData.chunks.join("");
+        
+        // 发送完整图片给所有客户端
+        socket.to(data.sessionId).emit('background-transfer-complete', {
+          imageUrl: fullImage
+        });
+        
+        // 清理内存
+        delete imageChunks[data.imageId];
+      }
     }
   });
   
