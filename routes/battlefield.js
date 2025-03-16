@@ -60,19 +60,27 @@ router.get('/sessions/:sessionId', async (req, res, next) => {
       await battlefield.save();
     }
     
+    // 将数据转换为客户端期望的格式
+    const clientData = {
+      sessionId: battlefield.sessionId,
+      settings: battlefield.settings,
+      lastUpdated: battlefield.lastUpdated,
+      pieces: Array.from(battlefield.pieces.values())
+    };
+    
+    // 添加背景图片信息
+    if (battlefield.background && battlefield.background.imageUrl) {
+      clientData.background = battlefield.background;
+    }
+    
     // 返回战场数据
     res.json({
       success: true,
-      data: {
-        sessionId: battlefield.sessionId,
-        background: battlefield.background,
-        pieces: Array.from(battlefield.pieces.values()),
-        settings: battlefield.settings,
-        lastUpdated: battlefield.lastUpdated
-      }
+      data: clientData
     });
     
   } catch (error) {
+    console.error("获取战场数据出错:", error);
     next(error);
   }
 });
@@ -85,24 +93,41 @@ router.get('/sessions/:sessionId', async (req, res, next) => {
 router.post('/sessions/:sessionId', async (req, res, next) => {
   try {
     const { sessionId } = req.params;
-    const { pieces, settings } = req.body;
+    const { pieces, settings, background } = req.body;
     
-    if (!pieces) {
-      return res.status(400).json({
-        success: false,
-        error: '缺少棋子数据'
-      });
-    }
+    console.log("接收到战场数据:", JSON.stringify(req.body).substring(0, 200) + "...");
     
     // 构建更新数据对象
     const updateData = {
-      pieces: new Map(pieces.map(piece => [piece.id, piece])),
       lastUpdated: Date.now()
     };
     
-    // 如果提供了设置，也更新它
+    // 处理棋子数据 - 从数组转换为Map
+    if (pieces && Array.isArray(pieces)) {
+      const piecesMap = new Map();
+      pieces.forEach(piece => {
+        if (piece && piece.id) {
+          piecesMap.set(piece.id, piece);
+        }
+      });
+      updateData.pieces = piecesMap;
+    }
+    
+    // 处理设置数据
     if (settings) {
-      updateData.settings = settings;
+      updateData.settings = {
+        scale: settings.scale || 1.0,
+        gridVisible: typeof settings.gridVisible === 'boolean' ? settings.gridVisible : true,
+        pieceSize: settings.pieceSize || 40
+      };
+    }
+    
+    // 处理背景图片
+    if (background && background.imageUrl) {
+      updateData.background = {
+        imageUrl: background.imageUrl,
+        lastUpdated: Date.now()
+      };
     }
     
     // 更新或创建战场
@@ -116,10 +141,36 @@ router.post('/sessions/:sessionId', async (req, res, next) => {
     );
     
     // 通过Socket.io通知其他客户端
-    req.app.get('io')?.to(sessionId).emit('battlefield-state-updated', {
-      pieces: Array.from(battlefield.pieces.values()),
-      settings: battlefield.settings
-    });
+    const io = req.app.get('io');
+    if (io) {
+      // 转换数据为客户端期望的格式
+      const clientState = {
+        isGridVisible: battlefield.settings.gridVisible,
+        pieceSize: battlefield.settings.pieceSize,
+        pieces: {}
+      };
+      
+      // 添加背景图片
+      if (battlefield.background && battlefield.background.imageUrl) {
+        clientState.backgroundImage = battlefield.background.imageUrl;
+      }
+      
+      // 转换棋子数据 - 从Map转换为对象
+      Array.from(battlefield.pieces.entries()).forEach(([id, piece]) => {
+        clientState.pieces[id] = {
+          x: piece.x || 0,
+          y: piece.y || 0,
+          name: piece.name || "",
+          type: piece.type || "monster",
+          currentHp: piece.currentHp || 0,
+          maxHp: piece.maxHp || 0
+        };
+      });
+      
+      io.to(sessionId).emit('battlefield-state-updated', {
+        state: clientState
+      });
+    }
     
     res.json({
       success: true,
@@ -130,6 +181,7 @@ router.post('/sessions/:sessionId', async (req, res, next) => {
     });
     
   } catch (error) {
+    console.error("保存战场数据出错:", error);
     next(error);
   }
 });
@@ -220,17 +272,25 @@ router.post('/sessions/:sessionId/pieces/:pieceId/move', async (req, res, next) 
     
     const piece = battlefield.pieces.get(pieceId);
     if (!piece) {
-      return res.status(404).json({
-        success: false,
-        error: '找不到棋子'
-      });
+      // 如果棋子不存在，创建新棋子
+      const newPiece = {
+        id: pieceId,
+        x: x,
+        y: y,
+        name: req.body.name || "",
+        type: req.body.type || "monster",
+        currentHp: req.body.currentHp || 0,
+        maxHp: req.body.maxHp || 0
+      };
+      battlefield.pieces.set(pieceId, newPiece);
+    } else {
+      // 更新现有棋子的位置
+      piece.x = x;
+      piece.y = y;
+      battlefield.pieces.set(pieceId, piece);
     }
     
-    piece.x = x;
-    piece.y = y;
-    battlefield.pieces.set(pieceId, piece);
     battlefield.lastUpdated = Date.now();
-    
     await battlefield.save();
     
     // 通过Socket.io通知其他客户端
@@ -244,7 +304,7 @@ router.post('/sessions/:sessionId/pieces/:pieceId/move', async (req, res, next) 
       success: true,
       data: {
         sessionId: battlefield.sessionId,
-        piece: piece,
+        piece: battlefield.pieces.get(pieceId),
         lastUpdated: battlefield.lastUpdated
       }
     });
@@ -319,4 +379,4 @@ router.post('/sessions/:sessionId/settings', async (req, res, next) => {
   }
 });
 
-module.exports = router; 
+module.exports = router;
