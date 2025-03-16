@@ -50,7 +50,7 @@ router.get('/sessions/:sessionId', async (req, res, next) => {
     if (!battlefield) {
       battlefield = new Battlefield({
         sessionId,
-        pieces: new Map(),
+        pieces: [],
         settings: {
           scale: 1.0,
           gridVisible: true,
@@ -60,23 +60,16 @@ router.get('/sessions/:sessionId', async (req, res, next) => {
       await battlefield.save();
     }
     
-    // 将数据转换为客户端期望的格式
-    const clientData = {
-      sessionId: battlefield.sessionId,
-      settings: battlefield.settings,
-      lastUpdated: battlefield.lastUpdated,
-      pieces: Array.from(battlefield.pieces.values())
-    };
-    
-    // 添加背景图片信息
-    if (battlefield.background && battlefield.background.imageUrl) {
-      clientData.background = battlefield.background;
-    }
-    
     // 返回战场数据
     res.json({
       success: true,
-      data: clientData
+      data: {
+        sessionId: battlefield.sessionId,
+        settings: battlefield.settings,
+        lastUpdated: battlefield.lastUpdated,
+        pieces: battlefield.pieces || [],
+        background: battlefield.background
+      }
     });
     
   } catch (error) {
@@ -95,22 +88,21 @@ router.post('/sessions/:sessionId', async (req, res, next) => {
     const { sessionId } = req.params;
     const { pieces, settings, background } = req.body;
     
-    console.log("接收到战场数据:", JSON.stringify(req.body).substring(0, 200) + "...");
+    console.log("接收到战场数据:", 
+      `sessionId: ${sessionId}, ` +
+      `pieces: ${pieces ? pieces.length : 0}, ` +
+      `settings: ${settings ? '有设置数据' : '无设置数据'}, ` +
+      `background: ${background ? '有背景' : '无背景'}`
+    );
     
     // 构建更新数据对象
     const updateData = {
       lastUpdated: Date.now()
     };
     
-    // 处理棋子数据 - 从数组转换为Map
+    // 处理棋子数据 - 使用数组方式存储
     if (pieces && Array.isArray(pieces)) {
-      const piecesMap = new Map();
-      pieces.forEach(piece => {
-        if (piece && piece.id) {
-          piecesMap.set(piece.id, piece);
-        }
-      });
-      updateData.pieces = piecesMap;
+      updateData.pieces = pieces;
     }
     
     // 处理设置数据
@@ -155,17 +147,21 @@ router.post('/sessions/:sessionId', async (req, res, next) => {
         clientState.backgroundImage = battlefield.background.imageUrl;
       }
       
-      // 转换棋子数据 - 从Map转换为对象
-      Array.from(battlefield.pieces.entries()).forEach(([id, piece]) => {
-        clientState.pieces[id] = {
-          x: piece.x || 0,
-          y: piece.y || 0,
-          name: piece.name || "",
-          type: piece.type || "monster",
-          currentHp: piece.currentHp || 0,
-          maxHp: piece.maxHp || 0
-        };
-      });
+      // 转换棋子数据 - 从数组转换为对象
+      if (Array.isArray(battlefield.pieces)) {
+        battlefield.pieces.forEach(piece => {
+          if (piece && piece.id) {
+            clientState.pieces[piece.id] = {
+              x: piece.x || 0,
+              y: piece.y || 0,
+              name: piece.name || "",
+              type: piece.type || "monster",
+              currentHp: piece.currentHp || 0,
+              maxHp: piece.maxHp || 0
+            };
+          }
+        });
+      }
       
       io.to(sessionId).emit('battlefield-state-updated', {
         state: clientState
@@ -270,10 +266,13 @@ router.post('/sessions/:sessionId/pieces/:pieceId/move', async (req, res, next) 
       });
     }
     
-    const piece = battlefield.pieces.get(pieceId);
-    if (!piece) {
+    // 找到要更新的棋子
+    const pieceIndex = battlefield.pieces.findIndex(p => p.id === pieceId);
+    let updatedPiece;
+    
+    if (pieceIndex === -1) {
       // 如果棋子不存在，创建新棋子
-      const newPiece = {
+      updatedPiece = {
         id: pieceId,
         x: x,
         y: y,
@@ -282,12 +281,12 @@ router.post('/sessions/:sessionId/pieces/:pieceId/move', async (req, res, next) 
         currentHp: req.body.currentHp || 0,
         maxHp: req.body.maxHp || 0
       };
-      battlefield.pieces.set(pieceId, newPiece);
+      battlefield.pieces.push(updatedPiece);
     } else {
-      // 更新现有棋子的位置
-      piece.x = x;
-      piece.y = y;
-      battlefield.pieces.set(pieceId, piece);
+      // 更新现有棋子
+      battlefield.pieces[pieceIndex].x = x;
+      battlefield.pieces[pieceIndex].y = y;
+      updatedPiece = battlefield.pieces[pieceIndex];
     }
     
     battlefield.lastUpdated = Date.now();
@@ -304,7 +303,7 @@ router.post('/sessions/:sessionId/pieces/:pieceId/move', async (req, res, next) 
       success: true,
       data: {
         sessionId: battlefield.sessionId,
-        piece: battlefield.pieces.get(pieceId),
+        piece: updatedPiece,
         lastUpdated: battlefield.lastUpdated
       }
     });
