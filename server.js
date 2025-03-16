@@ -259,17 +259,21 @@ io.on('connection', (socket) => {
               clientState.backgroundImage = battlefield.background.imageUrl;
             }
             
-            // 转换棋子数据 - 从Map转换为对象
-            Array.from(battlefield.pieces.entries()).forEach(([id, piece]) => {
-              clientState.pieces[id] = {
-                x: piece.x || 0,
-                y: piece.y || 0,
-                name: piece.name || "",
-                type: piece.type || "monster",
-                currentHp: piece.currentHp || 0,
-                maxHp: piece.maxHp || 0
-              };
-            });
+            // 转换棋子数据 - 从数组转换为对象
+            if (Array.isArray(battlefield.pieces)) {
+              battlefield.pieces.forEach(piece => {
+                if (piece && piece.id) {
+                  clientState.pieces[piece.id] = {
+                    x: piece.x || 0,
+                    y: piece.y || 0,
+                    name: piece.name || "",
+                    type: piece.type || "monster",
+                    currentHp: piece.currentHp || 0,
+                    maxHp: piece.maxHp || 0
+                  };
+                }
+              });
+            }
             
             socket.emit('battlefield-state', {
               state: clientState
