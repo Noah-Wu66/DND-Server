@@ -185,10 +185,25 @@ async function persistSessionData(sessionId) {
         if (battlefieldData) {
              // 将 pieces 对象转换回 Schema 定义的数组格式
              const piecesArray = Object.values(battlefieldData.pieces || {});
+             
+             // 确保每个棋子对象都是正确的格式，不是字符串
+             const validPiecesArray = piecesArray.map(piece => {
+                 // 如果piece是字符串，尝试解析它
+                 if (typeof piece === 'string') {
+                     try {
+                         return JSON.parse(piece);
+                     } catch (e) {
+                         console.error(`Error parsing piece string: ${piece}`);
+                         return null;
+                     }
+                 }
+                 return piece;
+             }).filter(Boolean); // 移除可能的null值
+             
              await Battlefield.findOneAndUpdate(
                  { sessionId: sessionId },
                  { $set: {
-                     pieces: piecesArray,
+                     pieces: validPiecesArray,
                      'settings.scale': battlefieldData.scale,
                      'settings.gridVisible': battlefieldData.isGridVisible,
                      'settings.pieceSize': battlefieldData.pieceSize,
@@ -248,6 +263,38 @@ io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
   let currentSessionId = null; // 跟踪此 socket 加入的会话 ID
 
+  // 添加这个辅助函数，确保战场数据中的pieces都是合法对象
+  function sanitizeBattlefieldData(battlefieldData) {
+      if (!battlefieldData || !battlefieldData.pieces) return battlefieldData;
+      
+      const sanitizedPieces = {};
+      
+      // 遍历所有pieces，确保它们都是对象而不是字符串
+      Object.keys(battlefieldData.pieces).forEach(pieceId => {
+          let piece = battlefieldData.pieces[pieceId];
+          
+          // 如果是字符串，尝试解析为对象
+          if (typeof piece === 'string') {
+              try {
+                  piece = JSON.parse(piece);
+              } catch (e) {
+                  console.error(`Error parsing piece string for ${pieceId}: ${piece}`);
+                  // 解析失败则跳过这个piece
+                  return;
+              }
+          }
+          
+          // 确保piece有必要的字段
+          if (piece && piece.id) {
+              sanitizedPieces[pieceId] = piece;
+          }
+      });
+      
+      // 创建一个新对象，避免修改原始对象
+      const sanitizedData = { ...battlefieldData, pieces: sanitizedPieces };
+      return sanitizedData;
+  }
+
   // --- 通用加入会话逻辑 ---
   socket.on('join-session', (sessionId) => {
     if (!sessionId) {
@@ -270,9 +317,9 @@ io.on('connection', (socket) => {
     socket.emit('roll-history-sync', diceData.rollHistory); // 发送骰子历史
 
     const battlefieldData = getBattlefieldSession(sessionId);
-     // 确保发送的 battlefield 数据结构与客户端 loadBattlefieldState 期望的一致
-     console.log(`Emitting initial battlefield-state-updated to ${socket.id} for ${sessionId}`);
-    socket.emit('battlefield-state-updated', { state: battlefieldData }); // 发送战场状态
+    // 确保发送的 battlefield 数据结构与客户端 loadBattlefieldState 期望的一致
+    console.log(`Emitting initial battlefield-state-updated to ${socket.id} for ${sessionId}`);
+    socket.emit('battlefield-state-updated', { state: sanitizeBattlefieldData(battlefieldData) }); // 发送战场状态
   });
 
   // --- 状态请求处理 ---
@@ -295,7 +342,7 @@ io.on('connection', (socket) => {
       if (!data || !data.sessionId) return;
       console.log(`Received request-latest-battlefield-state for ${data.sessionId} from ${socket.id}`);
       const battlefieldData = getBattlefieldSession(data.sessionId);
-      socket.emit('battlefield-state-updated', { state: battlefieldData });
+      socket.emit('battlefield-state-updated', { state: sanitizeBattlefieldData(battlefieldData) });
   });
 
 
@@ -341,6 +388,26 @@ io.on('connection', (socket) => {
                currentHp: newMonsterData.currentHp,
                maxHp: newMonsterData.maxHp
           };
+          
+          // 确保对象是真正的对象，不是字符串
+          if (typeof battlefield.pieces[monster.id] === 'string') {
+              try {
+                  battlefield.pieces[monster.id] = JSON.parse(battlefield.pieces[monster.id]);
+              } catch (e) {
+                  console.error(`Error parsing piece string for ${monster.id}: ${battlefield.pieces[monster.id]}`);
+                  // 如果解析失败，创建一个新的对象
+                  battlefield.pieces[monster.id] = {
+                      id: monster.id,
+                      x: 50 + (pieceCount % 10) * 50,
+                      y: 50 + Math.floor(pieceCount / 10) * 50,
+                      name: newMonsterData.name,
+                      type: newMonsterData.type,
+                      currentHp: newMonsterData.currentHp,
+                      maxHp: newMonsterData.maxHp
+                  };
+              }
+          }
+          
           battlefield.lastUpdated = Date.now(); // 更新战场时间戳
       }
       // --- 结束添加 ---
@@ -350,7 +417,7 @@ io.on('connection', (socket) => {
       // 广播更新后的顺序
       io.to(sessionId).emit('monsters-reordered', { order: session.monsterOrder });
       // --- 添加: 广播更新后的战场状态 --- 
-      io.to(sessionId).emit('battlefield-state-updated', { state: battlefield });
+      io.to(sessionId).emit('battlefield-state-updated', { state: sanitizeBattlefieldData(battlefield) });
       // --- 结束添加 ---
 
       console.log(`Monster ${monster.id} added. Current monsters:`, Object.keys(session.monsters));
@@ -436,7 +503,7 @@ io.on('connection', (socket) => {
          // 广播更新后的顺序
          io.to(sessionId).emit('monsters-reordered', { order: session.monsterOrder });
          // 广播更新后的战场状态
-         io.to(sessionId).emit('battlefield-state-updated', { state: battlefield });
+         io.to(sessionId).emit('battlefield-state-updated', { state: sanitizeBattlefieldData(battlefield) });
 
          persistSessionData(sessionId).catch(err => console.error("Async persist error (batch-delete):", err)); // <--- 添加异步保存
          console.log(`Monsters deleted. Remaining:`, Object.keys(session.monsters));
@@ -601,7 +668,7 @@ io.on('connection', (socket) => {
     if (wasPieceNewlyCreated) {
         // If the piece was just created on the battlefield, broadcast the full state
         console.log(`Broadcasting full battlefield state update after creating piece ${pieceId} during move.`);
-        io.to(sessionId).emit('battlefield-state-updated', { state: battlefield });
+        io.to(sessionId).emit('battlefield-state-updated', { state: sanitizeBattlefieldData(battlefield) });
     } else {
         // Otherwise, just broadcast the move to other clients
         // console.log(`Broadcasting piece move for ${pieceId} in ${sessionId} to (${x}, ${y})`);
