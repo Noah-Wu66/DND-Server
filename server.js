@@ -183,27 +183,12 @@ async function persistSessionData(sessionId) {
         }
         const battlefieldData = battlefieldSessions[sessionId];
         if (battlefieldData) {
-             // 将 pieces 对象转换回 Schema 定义的数组格式
              const piecesArray = Object.values(battlefieldData.pieces || {});
-             
-             // 确保每个棋子对象都是正确的格式，不是字符串
-             const validPiecesArray = piecesArray.map(piece => {
-                 // 如果piece是字符串，尝试解析它
-                 if (typeof piece === 'string') {
-                     try {
-                         return JSON.parse(piece);
-                     } catch (e) {
-                         console.error(`Error parsing piece string: ${piece}`);
-                         return null;
-                     }
-                 }
-                 return piece;
-             }).filter(Boolean); // 移除可能的null值
              
              await Battlefield.findOneAndUpdate(
                  { sessionId: sessionId },
                  { $set: {
-                     pieces: validPiecesArray,
+                     pieces: piecesArray,
                      'settings.scale': battlefieldData.scale,
                      'settings.gridVisible': battlefieldData.isGridVisible,
                      'settings.pieceSize': battlefieldData.pieceSize,
@@ -388,25 +373,6 @@ io.on('connection', (socket) => {
                currentHp: newMonsterData.currentHp,
                maxHp: newMonsterData.maxHp
           };
-          
-          // 确保对象是真正的对象，不是字符串
-          if (typeof battlefield.pieces[monster.id] === 'string') {
-              try {
-                  battlefield.pieces[monster.id] = JSON.parse(battlefield.pieces[monster.id]);
-              } catch (e) {
-                  console.error(`Error parsing piece string for ${monster.id}: ${battlefield.pieces[monster.id]}`);
-                  // 如果解析失败，创建一个新的对象
-                  battlefield.pieces[monster.id] = {
-                      id: monster.id,
-                      x: 50 + (pieceCount % 10) * 50,
-                      y: 50 + Math.floor(pieceCount / 10) * 50,
-                      name: newMonsterData.name,
-                      type: newMonsterData.type,
-                      currentHp: newMonsterData.currentHp,
-                      maxHp: newMonsterData.maxHp
-                  };
-              }
-          }
           
           battlefield.lastUpdated = Date.now(); // 更新战场时间戳
       }
