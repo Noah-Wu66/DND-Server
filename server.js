@@ -17,10 +17,10 @@ const Battlefield = require('./models/battlefield'); // <--- 恢复 Battlefield 
 // const errorHandler = require('./middlewares/errorHandler');
 
 // 确保所有的全局变量和函数定义在服务器初始化之前
-// 在文件开头定义会话存储
-const sessions = {};      // 战斗助手会话: { sessionId: { monsters: {...}, monsterOrder: [...], lastUpdated: Date } }
-const diceSessions = {};  // 骰子会话: { sessionId: { diceState: {...}, rollHistory: [...], lastUpdated: Date } }
-const battlefieldSessions = {}; // 战场会话: { sessionId: { pieces: {...}, backgroundImage: "", scale: number, ...  } }
+// 在文件开头定义会话存储 (使用 let 允许重新赋值)
+let sessions = {};      // 战斗助手会话: { sessionId: { monsters: {...}, monsterOrder: [...], lastUpdated: Date } }
+let diceSessions = {};  // 骰子会话: { sessionId: { diceState: {...}, rollHistory: [...], lastUpdated: Date } }
+let battlefieldSessions = {}; // 战场会话: { sessionId: { pieces: {...}, backgroundImage: "", scale: number, ...  } }
 const backgroundChunks = {}; // 背景图片分块上传: { imageId: { chunks: [...], sessionId: "", ... } }
 
 // 初始化应用
