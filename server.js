@@ -16,6 +16,13 @@ const DiceSession = require('./models/diceSession'); // <--- 恢复 DiceSession 
 const Battlefield = require('./models/battlefield'); // <--- 恢复 Battlefield 模型
 // const errorHandler = require('./middlewares/errorHandler');
 
+// 确保所有的全局变量和函数定义在服务器初始化之前
+// 在文件开头定义会话存储
+const sessions = {};      // 战斗助手会话: { sessionId: { monsters: {...}, monsterOrder: [...], lastUpdated: Date } }
+const diceSessions = {};  // 骰子会话: { sessionId: { diceState: {...}, rollHistory: [...], lastUpdated: Date } }
+const battlefieldSessions = {}; // 战场会话: { sessionId: { pieces: {...}, backgroundImage: "", scale: number, ...  } }
+const backgroundChunks = {}; // 背景图片分块上传: { imageId: { chunks: [...], sessionId: "", ... } }
+
 // 初始化应用
 const app = express();
 const server = http.createServer(app);
@@ -98,11 +105,6 @@ app.use('/proxy/dnd-database', async (req, res) => {
 
 
 // -------------------- 内存状态管理 & MongoDB 持久化 --------------------
-let sessions = {}; // 内存缓存
-let diceSessions = {}; // 内存缓存
-let battlefieldSessions = {}; // 内存缓存
-const backgroundChunks = {};
-
 // --- 修改: 从 MongoDB 加载数据 ---
 async function loadDataOnStartup() {
     console.log("Loading session data from MongoDB...");
@@ -201,6 +203,7 @@ async function loadDataOnStartup() {
 // --- 修改: 将内存数据保存到 MongoDB ---
 async function persistSessionData(sessionId) {
     try {
+        console.log(`Starting data persistence for session ${sessionId}`);
         const sessionData = sessions[sessionId];
         if (sessionData) {
              await Session.findOneAndUpdate(
@@ -208,6 +211,7 @@ async function persistSessionData(sessionId) {
                  { $set: { monsters: sessionData.monsters, monsterOrder: sessionData.monsterOrder, lastUpdated: sessionData.lastUpdated } },
                  { upsert: true, new: true }
              );
+             console.log(`Session data persisted for ${sessionId}`);
         }
         const diceData = diceSessions[sessionId];
         if (diceData) {
@@ -216,11 +220,55 @@ async function persistSessionData(sessionId) {
                  { $set: { diceState: diceData.diceState, rollHistory: diceData.rollHistory, lastUpdated: diceData.lastUpdated } },
                  { upsert: true }
              );
+             console.log(`Dice session data persisted for ${sessionId}`);
         }
         const battlefieldData = battlefieldSessions[sessionId];
         if (battlefieldData) {
              try {
-                 // 确保我们得到对象的深拷贝，避免引用问题
+                 console.log(`Starting battlefield data persistence for ${sessionId}`);
+                 
+                 // 确保 sanitizeBattlefieldData 函数存在
+                 if (typeof sanitizeBattlefieldData !== 'function') {
+                     console.error(`sanitizeBattlefieldData function is not defined!`);
+                     // 创建简单的内联版本以防止错误
+                     const sanitizedData = { ...battlefieldData, pieces: { ...battlefieldData.pieces } };
+                     
+                     // 提取 pieces 为纯粹的对象数组
+                     const cleanPieces = Object.values(sanitizedData.pieces || {}).map(piece => {
+                         if (!piece || typeof piece !== 'object') return null;
+                         return {
+                             id: String(piece.id || ''),
+                             x: Number(piece.x || 0),
+                             y: Number(piece.y || 0),
+                             name: String(piece.name || ''),
+                             type: String(piece.type || 'monster'),
+                             currentHp: Number(piece.currentHp || 0),
+                             maxHp: Number(piece.maxHp || 0)
+                         };
+                     }).filter(Boolean);
+                     
+                     console.log(`Created fallback data with ${cleanPieces.length} pieces`);
+                     
+                     // 构建更新对象
+                     const updateObject = {
+                         pieces: cleanPieces,
+                         'settings.scale': Number(sanitizedData.scale || 1.0),
+                         'settings.gridVisible': Boolean(sanitizedData.isGridVisible),
+                         'settings.pieceSize': Number(sanitizedData.pieceSize || 40),
+                         'background.imageUrl': sanitizedData.backgroundImage || null,
+                         lastUpdated: new Date(sanitizedData.lastUpdated || Date.now())
+                     };
+                     
+                     await Battlefield.findOneAndUpdate(
+                         { sessionId: sessionId },
+                         { $set: updateObject },
+                         { upsert: true, new: true }
+                     );
+                     console.log(`Battlefield data persisted using fallback for ${sessionId}`);
+                     return;
+                 }
+                 
+                 // 正常流程继续
                  const sanitizedData = JSON.parse(JSON.stringify(sanitizeBattlefieldData(battlefieldData)));
                  
                  // 从数据中提取 pieces 为纯粹的对象数组
@@ -257,7 +305,7 @@ async function persistSessionData(sessionId) {
                      updateObject['background.lastUpdated'] = new Date();
                  }
                  
-                 // 执行数据库更新
+                 // 执行数据库更新，显式指定 options 以确保一致行为
                  await Battlefield.findOneAndUpdate(
                      { sessionId: sessionId },
                      { $set: updateObject },
@@ -267,6 +315,42 @@ async function persistSessionData(sessionId) {
                  console.log(`Successfully persisted battlefield data for session ${sessionId}`);
              } catch (innerError) {
                  console.error(`Error processing battlefield data for session ${sessionId}:`, innerError);
+                 // 尝试简化的保存方式
+                 try {
+                     console.log(`Trying simplified persistence for battlefield session ${sessionId}`);
+                     const simplePieces = [];
+                     
+                     if (battlefieldData && battlefieldData.pieces) {
+                         Object.keys(battlefieldData.pieces).forEach(id => {
+                             const piece = battlefieldData.pieces[id];
+                             if (piece && typeof piece === 'object') {
+                                 simplePieces.push({
+                                     id: String(id),
+                                     x: Number(piece.x || 0),
+                                     y: Number(piece.y || 0),
+                                     name: String(piece.name || 'Unknown'),
+                                     type: 'monster',
+                                     currentHp: 0,
+                                     maxHp: 0
+                                 });
+                             }
+                         });
+                     }
+                     
+                     await Battlefield.findOneAndUpdate(
+                         { sessionId: sessionId },
+                         { 
+                             $set: { 
+                                 pieces: simplePieces,
+                                 lastUpdated: new Date()
+                             }
+                         },
+                         { upsert: true }
+                     );
+                     console.log(`Successfully persisted simplified battlefield data for session ${sessionId}`);
+                 } catch (fallbackError) {
+                     console.error(`Even simplified persistence failed for session ${sessionId}:`, fallbackError);
+                 }
              }
         }
     } catch (error) {
@@ -328,61 +412,61 @@ function getBattlefieldSession(sessionId) {
 }
 // -----------------------------------------------------
 
+// 将 sanitizeBattlefieldData 函数移到全局作用域
+// 添加这个辅助函数，确保战场数据中的pieces都是合法对象
+function sanitizeBattlefieldData(battlefieldData) {
+    if (!battlefieldData) return {};
+    if (!battlefieldData.pieces) return { ...battlefieldData, pieces: {} };
+    
+    try {
+        // 创建深拷贝，避免修改原始数据
+        const sanitizedData = {
+            ...battlefieldData,
+            pieces: {}
+        };
+        
+        // 遍历所有pieces，确保它们都是对象而不是字符串
+        Object.keys(battlefieldData.pieces).forEach(pieceId => {
+            let piece = battlefieldData.pieces[pieceId];
+            
+            // 如果是字符串，尝试解析为对象
+            if (typeof piece === 'string') {
+                try {
+                    piece = JSON.parse(piece);
+                    console.log(`Sanitized string piece for ${pieceId}`);
+                } catch (e) {
+                    console.error(`Cannot parse string piece for ${pieceId}, skipping:`, e.message);
+                    return; // 跳过这个piece
+                }
+            }
+            
+            // 确保piece有必要的字段
+            if (piece && typeof piece === 'object' && piece.id) {
+                // 创建一个有效的piece对象，确保所有字段类型正确
+                sanitizedData.pieces[pieceId] = {
+                    id: String(piece.id || pieceId),
+                    x: Number(piece.x || 0),
+                    y: Number(piece.y || 0),
+                    name: String(piece.name || 'Unknown'),
+                    type: String(piece.type || 'monster'),
+                    currentHp: Number(piece.currentHp || 0),
+                    maxHp: Number(piece.maxHp || 0)
+                };
+            }
+        });
+        
+        return sanitizedData;
+    } catch (error) {
+        console.error("Error in sanitizeBattlefieldData:", error);
+        // 如果出错，返回带空pieces的对象
+        return { ...battlefieldData, pieces: {} };
+    }
+}
 
 // WebSocket处理
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
   let currentSessionId = null; // 跟踪此 socket 加入的会话 ID
-
-  // 添加这个辅助函数，确保战场数据中的pieces都是合法对象
-  function sanitizeBattlefieldData(battlefieldData) {
-      if (!battlefieldData) return {};
-      if (!battlefieldData.pieces) return { ...battlefieldData, pieces: {} };
-      
-      try {
-          // 创建深拷贝，避免修改原始数据
-          const sanitizedData = {
-              ...battlefieldData,
-              pieces: {}
-          };
-          
-          // 遍历所有pieces，确保它们都是对象而不是字符串
-          Object.keys(battlefieldData.pieces).forEach(pieceId => {
-              let piece = battlefieldData.pieces[pieceId];
-              
-              // 如果是字符串，尝试解析为对象
-              if (typeof piece === 'string') {
-                  try {
-                      piece = JSON.parse(piece);
-                      console.log(`Sanitized string piece for ${pieceId}`);
-                  } catch (e) {
-                      console.error(`Cannot parse string piece for ${pieceId}, skipping:`, e.message);
-                      return; // 跳过这个piece
-                  }
-              }
-              
-              // 确保piece有必要的字段
-              if (piece && typeof piece === 'object' && piece.id) {
-                  // 创建一个有效的piece对象，确保所有字段类型正确
-                  sanitizedData.pieces[pieceId] = {
-                      id: String(piece.id || pieceId),
-                      x: Number(piece.x || 0),
-                      y: Number(piece.y || 0),
-                      name: String(piece.name || 'Unknown'),
-                      type: String(piece.type || 'monster'),
-                      currentHp: Number(piece.currentHp || 0),
-                      maxHp: Number(piece.maxHp || 0)
-                  };
-              }
-          });
-          
-          return sanitizedData;
-      } catch (error) {
-          console.error("Error in sanitizeBattlefieldData:", error);
-          // 如果出错，返回带空pieces的对象
-          return { ...battlefieldData, pieces: {} };
-      }
-  }
 
   // --- 通用加入会话逻辑 ---
   socket.on('join-session', (sessionId) => {
@@ -1019,3 +1103,14 @@ process.on('SIGTERM', shutdown);
 
 // 导出应用供测试使用
 module.exports = { app, server, io };
+
+// 添加一个全局错误处理函数
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  // 应用程序处理逻辑，例如发送错误通知，但不要崩溃
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  // 记录错误并通知，但保持应用运行
+});
