@@ -58,7 +58,7 @@ app.use('/proxy/dnd-database', async (req, res) => {
     try {
       const targetUrl = `https://dnd-database.zeabur.app${req.url}`;
       console.log(`Proxying request to: ${targetUrl}`);
-      
+
       const method = req.method.toLowerCase();
       const requestOptions = {
         method,
@@ -70,24 +70,24 @@ app.use('/proxy/dnd-database', async (req, res) => {
           // 可能需要移除或修改其他与代理冲突的头部，如 'content-length'
         },
       };
-      
+
       // 对于POST, PUT等方法，需要转发请求体
       if (['post', 'put', 'patch'].includes(method) && req.body) {
         requestOptions.data = req.body;
       }
-      
+
       // 如果有查询参数
       if (Object.keys(req.query).length > 0) {
         requestOptions.params = req.query;
       }
-      
+
       const response = await axios(requestOptions);
-      
+
       // 返回数据
       res.status(response.status).json(response.data);
     } catch (error) {
       console.error('代理请求错误:', error.message);
-      
+
       // 如果错误中包含响应对象，则使用该响应的状态码
       if (error.response) {
         res.status(error.response.status).json({
@@ -141,10 +141,10 @@ async function loadDataOnStartup() {
                  console.log(`First piece sample from DB:`, JSON.stringify(doc.pieces[0]));
                  console.log(`First piece type: ${typeof doc.pieces[0]}`);
              }
-             
+
              // 确保所有 pieces 都是有效的对象
              const validPieces = Array.isArray(doc.pieces) ? doc.pieces.filter(piece => piece && typeof piece === 'object' && piece.id) : [];
-             
+
              const piecesObject = validPieces.reduce((pieceAcc, piece) => {
                  // 确保每个piece是普通对象而不是字符串
                  if (typeof piece === 'string') {
@@ -162,7 +162,7 @@ async function loadDataOnStartup() {
                  }
                  return pieceAcc;
              }, {});
-             
+
              // 检查是否有任何数组被转换为字符串
              Object.keys(piecesObject).forEach(id => {
                  const piece = piecesObject[id];
@@ -226,13 +226,13 @@ async function persistSessionData(sessionId) {
         if (battlefieldData) {
              try {
                  console.log(`Starting battlefield data persistence for ${sessionId}`);
-                 
+
                  // 确保 sanitizeBattlefieldData 函数存在
                  if (typeof sanitizeBattlefieldData !== 'function') {
                      console.error(`sanitizeBattlefieldData function is not defined!`);
                      // 创建简单的内联版本以防止错误
                      const sanitizedData = { ...battlefieldData, pieces: { ...battlefieldData.pieces } };
-                     
+
                      // 提取 pieces 为纯粹的对象数组
                      const cleanPieces = Object.values(sanitizedData.pieces || {}).map(piece => {
                          if (!piece || typeof piece !== 'object') return null;
@@ -246,9 +246,9 @@ async function persistSessionData(sessionId) {
                              maxHp: Number(piece.maxHp || 0)
                          };
                      }).filter(Boolean);
-                     
+
                      console.log(`Created fallback data with ${cleanPieces.length} pieces`);
-                     
+
                      // 构建更新对象
                      const updateObject = {
                          pieces: cleanPieces,
@@ -258,7 +258,7 @@ async function persistSessionData(sessionId) {
                          'background.imageUrl': sanitizedData.backgroundImage || null,
                          lastUpdated: new Date(sanitizedData.lastUpdated || Date.now())
                      };
-                     
+
                      await Battlefield.findOneAndUpdate(
                          { sessionId: sessionId },
                          { $set: updateObject },
@@ -267,10 +267,10 @@ async function persistSessionData(sessionId) {
                      console.log(`Battlefield data persisted using fallback for ${sessionId}`);
                      return;
                  }
-                 
+
                  // 正常流程继续
                  const sanitizedData = JSON.parse(JSON.stringify(sanitizeBattlefieldData(battlefieldData)));
-                 
+
                  // 从数据中提取 pieces 为纯粹的对象数组
                  const cleanPieces = Object.values(sanitizedData.pieces || {}).map(piece => {
                      // 最终转换确保数据类型正确
@@ -284,13 +284,13 @@ async function persistSessionData(sessionId) {
                          maxHp: Number(piece.maxHp || 0)
                      };
                  });
-                 
+
                  // 记录我们即将保存的数据
                  console.log(`Persisting ${cleanPieces.length} pieces for session ${sessionId}`);
                  if (cleanPieces.length > 0) {
                      console.log(`First piece sample (${typeof cleanPieces[0]}):`, JSON.stringify(cleanPieces[0]));
                  }
-                 
+
                  // 构建更新对象，避免复杂的嵌套结构
                  const updateObject = {
                      pieces: cleanPieces, // 直接使用纯粹的对象数组
@@ -300,18 +300,18 @@ async function persistSessionData(sessionId) {
                      'background.imageUrl': sanitizedData.backgroundImage || null,
                      lastUpdated: new Date(sanitizedData.lastUpdated || Date.now())
                  };
-                 
+
                  if (sanitizedData.backgroundImage) {
                      updateObject['background.lastUpdated'] = new Date();
                  }
-                 
+
                  // 执行数据库更新，显式指定 options 以确保一致行为
                  await Battlefield.findOneAndUpdate(
                      { sessionId: sessionId },
                      { $set: updateObject },
                      { upsert: true, new: true }
                  );
-                 
+
                  console.log(`Successfully persisted battlefield data for session ${sessionId}`);
              } catch (innerError) {
                  console.error(`Error processing battlefield data for session ${sessionId}:`, innerError);
@@ -319,7 +319,7 @@ async function persistSessionData(sessionId) {
                  try {
                      console.log(`Trying simplified persistence for battlefield session ${sessionId}`);
                      const simplePieces = [];
-                     
+
                      if (battlefieldData && battlefieldData.pieces) {
                          Object.keys(battlefieldData.pieces).forEach(id => {
                              const piece = battlefieldData.pieces[id];
@@ -336,11 +336,11 @@ async function persistSessionData(sessionId) {
                              }
                          });
                      }
-                     
+
                      await Battlefield.findOneAndUpdate(
                          { sessionId: sessionId },
-                         { 
-                             $set: { 
+                         {
+                             $set: {
                                  pieces: simplePieces,
                                  lastUpdated: new Date()
                              }
@@ -393,7 +393,7 @@ function getBattlefieldSession(sessionId) {
     } else {
         // 检查是否有任何 piece 是字符串
         const pieces = battlefieldSessions[sessionId].pieces;
-        
+
         if (pieces) {
             Object.keys(pieces).forEach(pieceId => {
                 if (typeof pieces[pieceId] === 'string') {
@@ -417,18 +417,18 @@ function getBattlefieldSession(sessionId) {
 function sanitizeBattlefieldData(battlefieldData) {
     if (!battlefieldData) return {};
     if (!battlefieldData.pieces) return { ...battlefieldData, pieces: {} };
-    
+
     try {
         // 创建深拷贝，避免修改原始数据
         const sanitizedData = {
             ...battlefieldData,
             pieces: {}
         };
-        
+
         // 遍历所有pieces，确保它们都是对象而不是字符串
         Object.keys(battlefieldData.pieces).forEach(pieceId => {
             let piece = battlefieldData.pieces[pieceId];
-            
+
             // 如果是字符串，尝试解析为对象
             if (typeof piece === 'string') {
                 try {
@@ -439,7 +439,7 @@ function sanitizeBattlefieldData(battlefieldData) {
                     return; // 跳过这个piece
                 }
             }
-            
+
             // 确保piece有必要的字段
             if (piece && typeof piece === 'object' && piece.id) {
                 // 创建一个有效的piece对象，确保所有字段类型正确
@@ -454,7 +454,7 @@ function sanitizeBattlefieldData(battlefieldData) {
                 };
             }
         });
-        
+
         return sanitizedData;
     } catch (error) {
         console.error("Error in sanitizeBattlefieldData:", error);
@@ -547,7 +547,7 @@ io.on('connection', (socket) => {
       }
       session.lastUpdated = Date.now();
 
-      // --- 添加: 同时更新战场状态 --- 
+      // --- 添加: 同时更新战场状态 ---
       if (!battlefield.pieces[monster.id]) {
           console.log(`Adding piece ${monster.id} to battlefield session ${sessionId}`);
           // 使用怪物的基本信息，并给一个默认位置
@@ -562,7 +562,7 @@ io.on('connection', (socket) => {
                currentHp: newMonsterData.currentHp,
                maxHp: newMonsterData.maxHp
           };
-          
+
           // 添加类型检查以防止字符串转换
           if (typeof battlefield.pieces[monster.id] !== 'object') {
               console.error(`Newly created piece is not an object: ${typeof battlefield.pieces[monster.id]}`);
@@ -577,7 +577,7 @@ io.on('connection', (socket) => {
                   maxHp: newMonsterData.maxHp
               };
           }
-          
+
           battlefield.lastUpdated = Date.now(); // 更新战场时间戳
       }
       // --- 结束添加 ---
@@ -586,7 +586,7 @@ io.on('connection', (socket) => {
       io.to(sessionId).emit('monster-updated', session.monsters[monster.id]);
       // 广播更新后的顺序
       io.to(sessionId).emit('monsters-reordered', { order: session.monsterOrder });
-      // --- 添加: 广播更新后的战场状态 --- 
+      // --- 添加: 广播更新后的战场状态 ---
       io.to(sessionId).emit('battlefield-state-updated', { state: sanitizeBattlefieldData(battlefield) });
       // --- 结束添加 ---
 
@@ -634,6 +634,66 @@ io.on('connection', (socket) => {
     }
   });
 
+  // 处理单个怪物删除请求
+  socket.on('delete-monster', (data) => {
+     if (!data || !data.sessionId || !data.monsterId) {
+         console.warn("Received invalid delete-monster data:", data);
+         return;
+     }
+     const { sessionId, monsterId } = data;
+     console.log(`Deleting monster ${monsterId} in session ${sessionId}`);
+     const session = getSession(sessionId);
+     const battlefield = getBattlefieldSession(sessionId); // 同时更新战场
+     let changed = false;
+
+     // 从怪物列表中删除
+     if (session.monsters[monsterId]) {
+         delete session.monsters[monsterId];
+         changed = true;
+     } else {
+         console.warn(`Monster ${monsterId} not found in session ${sessionId} for deletion.`);
+     }
+
+     // 从战场棋子中删除
+     if (battlefield.pieces && battlefield.pieces[monsterId]) {
+         delete battlefield.pieces[monsterId];
+         changed = true; // 标记战场也已改变
+     }
+
+     // 从顺序列表中删除
+     const index = session.monsterOrder.indexOf(monsterId);
+     if (index > -1) {
+         session.monsterOrder.splice(index, 1);
+         changed = true;
+     }
+
+     if (changed) {
+         session.lastUpdated = Date.now();
+         battlefield.lastUpdated = Date.now(); // 更新战场时间戳
+
+         // 广播删除事件给所有客户端
+         io.to(sessionId).emit('monsters-deleted', { monsterIds: [monsterId] });
+
+         // 广播更新后的顺序
+         io.to(sessionId).emit('monsters-reordered', { order: session.monsterOrder });
+
+         // 广播更新后的战场状态
+         if (battlefield.pieces) {
+             io.to(sessionId).emit('battlefield-state-updated', { state: sanitizeBattlefieldData(battlefield) });
+         }
+
+         // 保存到数据库
+         persistSessionData(sessionId).catch(err => console.error("Async persist error (delete-monster):", err));
+
+         console.log(`Monster ${monsterId} deleted. Remaining monsters:`, Object.keys(session.monsters));
+         if (battlefield.pieces) {
+             console.log(`Battlefield pieces after deletion:`, Object.keys(battlefield.pieces));
+         }
+     } else {
+         console.warn(`No changes made when deleting monster ${monsterId} in session ${sessionId}.`);
+     }
+  });
+
   // 处理前端发送的批量删除请求
   socket.on('batch-delete-monsters', (data) => {
      if (!data || !data.sessionId || !Array.isArray(data.monsterIds)) {
@@ -654,7 +714,7 @@ io.on('connection', (socket) => {
              changed = true;
          }
          // 从战场棋子中删除
-         if (battlefield.pieces[id]) {
+         if (battlefield.pieces && battlefield.pieces[id]) {
              delete battlefield.pieces[id];
              changed = true; // 标记战场也已改变
          }
@@ -673,11 +733,15 @@ io.on('connection', (socket) => {
          // 广播更新后的顺序
          io.to(sessionId).emit('monsters-reordered', { order: session.monsterOrder });
          // 广播更新后的战场状态
-         io.to(sessionId).emit('battlefield-state-updated', { state: sanitizeBattlefieldData(battlefield) });
+         if (battlefield.pieces) {
+             io.to(sessionId).emit('battlefield-state-updated', { state: sanitizeBattlefieldData(battlefield) });
+         }
 
          persistSessionData(sessionId).catch(err => console.error("Async persist error (batch-delete):", err)); // <--- 添加异步保存
          console.log(`Monsters deleted. Remaining:`, Object.keys(session.monsters));
-         console.log(`Battlefield pieces after deletion:`, Object.keys(battlefield.pieces));
+         if (battlefield.pieces) {
+             console.log(`Battlefield pieces after deletion:`, Object.keys(battlefield.pieces));
+         }
      }
   });
 
